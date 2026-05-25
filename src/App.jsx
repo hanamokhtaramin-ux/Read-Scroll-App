@@ -24,7 +24,7 @@ export const AppContext = createContext(null)
 export const useApp = () => useContext(AppContext)
 
 // Viewport widths below this are treated as real devices (full-screen, no frame)
-const FRAME_BREAKPOINT = 1100
+const FRAME_BREAKPOINT = 768
 
 function useWindowSize() {
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight })
@@ -135,7 +135,8 @@ const s = {
     flexDirection: 'column',
     alignItems: 'center',
     gap: 14,
-    paddingBottom: 20,
+    padding: '24px 0 32px',
+    width: '100%',
   },
   picker: {
     display: 'flex',

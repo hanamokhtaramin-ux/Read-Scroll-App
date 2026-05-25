@@ -5,8 +5,12 @@ import { useApp } from '../App'
 const GOLD = '#C8A84B'
 const CARD_W = 300
 const CARD_DISMISS_SECS = 5
-const SPEED_MIN = 0.05  // px/s
-const SPEED_MAX = 150   // px/s
+const SPEED_MIN = 2    // px/s
+const SPEED_MAX = 200  // px/s
+
+// Log scale so slow speeds feel usable — slider maps 0→1 to SPEED_MIN→SPEED_MAX exponentially
+const toSpeed = pct => Math.round(SPEED_MIN * Math.pow(SPEED_MAX / SPEED_MIN, pct) * 10) / 10
+const toPct   = spd => Math.log(Math.max(SPEED_MIN, spd) / SPEED_MIN) / Math.log(SPEED_MAX / SPEED_MIN)
 
 function speedLabel(speed) {
   return (speed / 40).toFixed(1) + '×'
@@ -18,12 +22,11 @@ function SpeedSlider({ speed, onChange, onInteract }) {
   function updateFromPointer(e) {
     const rect = trackRef.current.getBoundingClientRect()
     const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width))
-    const raw = SPEED_MIN + (x / rect.width) * (SPEED_MAX - SPEED_MIN)
-    onChange(Math.max(SPEED_MIN, Math.round(raw * 100) / 100))
+    onChange(toSpeed(x / rect.width))
     onInteract?.()
   }
 
-  const pct = ((speed - SPEED_MIN) / (SPEED_MAX - SPEED_MIN)) * 100
+  const pct = toPct(speed) * 100
 
   return (
     <div style={sl.wrap}>
