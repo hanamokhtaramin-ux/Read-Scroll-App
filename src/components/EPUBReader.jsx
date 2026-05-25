@@ -5,36 +5,35 @@ import HighlightPicker from './HighlightPicker'
 
 const GOLD = '#C8A84B'
 
-const EPUBReader = forwardRef(function EPUBReader({ fileData, initialChapter, initialProgress, onProgress, onPageInfo, onChapterChange }, scrollRef) {
+const EPUBReader = forwardRef(function EPUBReader(
+  { fileData, viewMode, chapterIndex, onChapterChange, initialProgress, onProgress, onPageInfo },
+  scrollRef
+) {
   const { theme, fontIndex, FONT_FAMILIES, fontSize } = useApp()
-  const [epubData, setEpubData] = useState(null)
-  const [chapterIndex, setChapterIndex] = useState(initialChapter || 0)
-  const [chapterHTML, setChapterHTML] = useState('')
-  const [status, setStatus] = useState('loading')
-  const [highlight, setHighlight] = useState(null) // { x, y }
+  const [epubData, setEpubData]         = useState(null)
+  const [chapterHTML, setChapterHTML]   = useState('')
+  const [allHTML, setAllHTML]           = useState('')
+  const [loadingMsg, setLoadingMsg]     = useState('')
+  const [status, setStatus]             = useState('loading')
+  const [highlight, setHighlight]       = useState(null)
   const contentRef = useRef(null)
   const wrapperRef = useRef(null)
+  const prevChapterRef = useRef(chapterIndex)
 
   const fontFamily = FONT_FAMILIES[fontIndex]?.value || FONT_FAMILIES[4].value
 
   // Parse EPUB once
   useEffect(() => {
     parseEPUB(fileData.slice(0))
-      .then(data => {
-        setEpubData(data)
-        setStatus('ready')
-        onPageInfo?.(chapterIndex + 1, data.spine.length)
-      })
-      .catch(err => {
-        setStatus('error')
-        console.error(err)
-      })
+      .then(data => { setEpubData(data); setStatus('idle') })
+      .catch(err => { console.error(err); setStatus('error') })
   }, [fileData])
 
-  // Load chapter whenever index changes
+  // Paged mode: load one chapter when chapterIndex or epubData changes
   useEffect(() => {
-    if (!epubData) return
-    setStatus('chapter-loading')
+    if (!epubData || viewMode !== 'paged') return
+    setStatus('loading')
+    setLoadingMsg('')
     const { zip, opfDir, spine } = epubData
     const item = spine[chapterIndex]
     if (!item) return
@@ -44,57 +43,88 @@ const EPUBReader = forwardRef(function EPUBReader({ fileData, initialChapter, in
         setChapterHTML(html)
         setStatus('ready')
         onPageInfo?.(chapterIndex + 1, spine.length)
-        onChapterChange?.(chapterIndex)
-        // Restore scroll for initial chapter only
-        if (chapterIndex === (initialChapter || 0) && initialProgress > 0 && scrollRef?.current) {
+        // Restore scroll only when first opening
+        const isFirst = chapterIndex === 0 && prevChapterRef.current === 0
+        if (isFirst && initialProgress > 0 && scrollRef?.current) {
           requestAnimationFrame(() => {
             const el = scrollRef.current
             if (el) el.scrollTop = initialProgress * (el.scrollHeight - el.clientHeight)
           })
-        } else if (scrollRef?.current) {
-          scrollRef.current.scrollTop = 0
+        } else if (!isFirst) {
+          if (scrollRef?.current) scrollRef.current.scrollTop = 0
         }
+        prevChapterRef.current = chapterIndex
       })
       .catch(err => {
-        setChapterHTML(`<p style="color:#FF3B30">Failed to load chapter: ${err.message}</p>`)
+        setChapterHTML(`<p style="color:#FF3B30">Chapter error: ${err.message}</p>`)
         setStatus('ready')
       })
-  }, [epubData, chapterIndex])
+  }, [epubData, chapterIndex, viewMode])
 
-  // Track scroll for progress
+  // Continuous mode: load ALL chapters concatenated
+  useEffect(() => {
+    if (!epubData || viewMode !== 'continuous') return
+    let cancelled = false
+    setStatus('loading')
+    setAllHTML('')
+
+    ;(async () => {
+      const { zip, opfDir, spine } = epubData
+      const parts = []
+      for (let i = 0; i < spine.length; i++) {
+        if (cancelled) return
+        setLoadingMsg(`Loading chapter ${i + 1} of ${spine.length}…`)
+        const html = await loadChapter(zip, opfDir, spine[i].href)
+        parts.push(`
+          <div data-chapter="${i}" style="
+            ${i > 0 ? 'border-top:1px solid rgba(128,128,128,0.18);margin-top:36px;padding-top:32px;' : ''}
+          ">${html}</div>
+        `)
+      }
+      if (cancelled) return
+      setAllHTML(parts.join(''))
+      setStatus('ready')
+      setLoadingMsg('')
+      onPageInfo?.(1, spine.length)
+
+      if (initialProgress > 0 && scrollRef?.current) {
+        requestAnimationFrame(() => {
+          const el = scrollRef.current
+          if (el) el.scrollTop = initialProgress * (el.scrollHeight - el.clientHeight)
+        })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [epubData, viewMode])
+
+  // Scroll → progress
   useEffect(() => {
     const el = scrollRef?.current
     if (!el) return
-    function handleScroll() {
+    const fn = () => {
       const max = el.scrollHeight - el.clientHeight
       if (max > 0) onProgress?.(el.scrollTop / max)
     }
-    el.addEventListener('scroll', handleScroll, { passive: true })
-    return () => el.removeEventListener('scroll', handleScroll)
+    el.addEventListener('scroll', fn, { passive: true })
+    return () => el.removeEventListener('scroll', fn)
   }, [scrollRef, onProgress])
 
-  // Text selection / highlight picker
+  // Text highlight picker
   useEffect(() => {
     const el = contentRef.current
     if (!el) return
     function handlePointerUp() {
       const sel = window.getSelection()
-      if (!sel || sel.isCollapsed || sel.toString().trim() === '') {
-        setHighlight(null)
-        return
-      }
+      if (!sel || sel.isCollapsed || !sel.toString().trim()) { setHighlight(null); return }
       const range = sel.getRangeAt(0)
       const selRect = range.getBoundingClientRect()
       const wrapperRect = wrapperRef.current?.getBoundingClientRect() || { top: 0, left: 0 }
       const scrollTop = scrollRef?.current?.scrollTop || 0
-      setHighlight({
-        x: selRect.left + selRect.width / 2 - wrapperRect.left,
-        y: selRect.top - wrapperRect.top + scrollTop,
-      })
+      setHighlight({ x: selRect.left + selRect.width / 2 - wrapperRect.left, y: selRect.top - wrapperRect.top + scrollTop })
     }
     el.addEventListener('pointerup', handlePointerUp)
     return () => el.removeEventListener('pointerup', handlePointerUp)
-  }, [chapterHTML])
+  }, [chapterHTML, allHTML])
 
   function applyHighlight(bgColor) {
     const sel = window.getSelection()
@@ -111,14 +141,7 @@ const EPUBReader = forwardRef(function EPUBReader({ fileData, initialChapter, in
     setHighlight(null)
   }
 
-  const goNext = useCallback(() => {
-    if (!epubData) return
-    setChapterIndex(i => Math.min(i + 1, epubData.spine.length - 1))
-  }, [epubData])
-
-  const goPrev = useCallback(() => {
-    setChapterIndex(i => Math.max(i - 1, 0))
-  }, [])
+  const totalChapters = epubData?.spine.length || 1
 
   const chapterStyle = {
     fontFamily,
@@ -130,38 +153,35 @@ const EPUBReader = forwardRef(function EPUBReader({ fileData, initialChapter, in
 
   return (
     <div ref={wrapperRef} style={s.wrapper}>
-      {(status === 'loading' || status === 'chapter-loading') && (
+      {/* Loading overlay */}
+      {status === 'loading' && (
         <div style={s.loadOverlay}>
           <span style={s.spinner} />
+          {loadingMsg && <span style={s.loadMsg}>{loadingMsg}</span>}
         </div>
       )}
 
+      {/* Content */}
       <div
         ref={contentRef}
         style={{ ...s.content, ...chapterStyle }}
-        dangerouslySetInnerHTML={{ __html: chapterHTML }}
+        dangerouslySetInnerHTML={{ __html: viewMode === 'continuous' ? allHTML : chapterHTML }}
       />
 
-      {/* Chapter nav */}
-      {epubData && (
+      {/* Paged chapter nav */}
+      {viewMode === 'paged' && epubData && (
         <div style={s.navRow}>
           <button
             style={{ ...s.navBtn, opacity: chapterIndex === 0 ? 0.3 : 1 }}
-            onClick={goPrev}
+            onClick={() => onChapterChange(Math.max(0, chapterIndex - 1))}
             disabled={chapterIndex === 0}
-          >
-            ← Prev
-          </button>
-          <span style={s.chapterLabel}>
-            {chapterIndex + 1} / {epubData.spine.length}
-          </span>
+          >← Prev</button>
+          <span style={s.pageLabel}>{chapterIndex + 1} / {totalChapters}</span>
           <button
-            style={{ ...s.navBtn, opacity: chapterIndex === epubData.spine.length - 1 ? 0.3 : 1 }}
-            onClick={goNext}
-            disabled={chapterIndex === epubData.spine.length - 1}
-          >
-            Next →
-          </button>
+            style={{ ...s.navBtn, opacity: chapterIndex >= totalChapters - 1 ? 0.3 : 1 }}
+            onClick={() => onChapterChange(Math.min(totalChapters - 1, chapterIndex + 1))}
+            disabled={chapterIndex >= totalChapters - 1}
+          >Next →</button>
         </div>
       )}
 
@@ -179,55 +199,12 @@ const EPUBReader = forwardRef(function EPUBReader({ fileData, initialChapter, in
 export default EPUBReader
 
 const s = {
-  wrapper: {
-    width: '100%',
-    position: 'relative',
-  },
-  loadOverlay: {
-    position: 'absolute',
-    inset: 0,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
-    minHeight: 200,
-  },
-  spinner: {
-    display: 'inline-block',
-    width: 28,
-    height: 28,
-    border: '3px solid rgba(200,168,75,0.2)',
-    borderTopColor: GOLD,
-    borderRadius: '50%',
-    animation: 'spin 0.8s linear infinite',
-  },
-  content: {
-    padding: '0 22px 24px',
-    minHeight: 300,
-    wordBreak: 'break-word',
-    overflowWrap: 'break-word',
-  },
-  navRow: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '16px 22px 40px',
-    borderTop: '1px solid rgba(128,128,128,0.15)',
-  },
-  navBtn: {
-    background: 'none',
-    border: `1px solid ${GOLD}`,
-    color: GOLD,
-    padding: '8px 16px',
-    borderRadius: 20,
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'opacity 0.15s',
-  },
-  chapterLabel: {
-    fontSize: 12,
-    color: 'rgba(128,128,128,0.6)',
-    fontWeight: 500,
-  },
+  wrapper: { width: '100%', position: 'relative' },
+  loadOverlay: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300, gap: 12 },
+  spinner: { display: 'inline-block', width: 28, height: 28, border: '3px solid rgba(200,168,75,0.2)', borderTopColor: GOLD, borderRadius: '50%', animation: 'spin 0.8s linear infinite' },
+  loadMsg: { fontSize: 12, color: 'rgba(255,255,255,0.35)', textAlign: 'center' },
+  content: { padding: '0 22px 24px', minHeight: 300, wordBreak: 'break-word', overflowWrap: 'break-word' },
+  navRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 22px 40px', borderTop: '1px solid rgba(128,128,128,0.15)' },
+  navBtn: { background: 'none', border: `1px solid ${GOLD}`, color: GOLD, padding: '8px 16px', borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'opacity 0.15s' },
+  pageLabel: { fontSize: 12, color: 'rgba(128,128,128,0.6)', fontWeight: 500 },
 }

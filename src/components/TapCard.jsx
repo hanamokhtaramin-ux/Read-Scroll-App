@@ -4,7 +4,7 @@ import SettingsPanel from './SettingsPanel'
 const GOLD = '#C8A84B'
 const CARD_W = 300
 const CARD_DISMISS_SECS = 5
-const SPEED_MIN = 10   // px/s
+const SPEED_MIN = 2    // px/s
 const SPEED_MAX = 150  // px/s
 
 function speedLabel(speed) {
@@ -52,7 +52,7 @@ function SpeedSlider({ speed, onChange, onInteract }) {
   )
 }
 
-export default function TapCard({ x, y, isPlaying, onPlay, speed, onSpeed, onRestart, onClose }) {
+export default function TapCard({ x, y, isPlaying, onPlay, speed, onSpeed, viewMode, onViewMode, onRestart, onClose }) {
   const [showSettings, setShowSettings] = useState(false)
   const timerRef = useRef(null)
 
@@ -103,6 +103,13 @@ export default function TapCard({ x, y, isPlaying, onPlay, speed, onSpeed, onRes
         <button style={s.iconBtn} onClick={wrap(onRestart)}>
           <span style={s.iconBtnIcon}>⟳</span>
           <span style={s.iconBtnLabel}>Restart</span>
+        </button>
+        <button
+          style={{ ...s.iconBtn, ...(viewMode === 'paged' ? s.iconBtnActive : {}) }}
+          onClick={wrap(() => onViewMode(viewMode === 'paged' ? 'continuous' : 'paged'))}
+        >
+          <span style={s.iconBtnIcon}>{viewMode === 'paged' ? '📄' : '≡'}</span>
+          <span style={s.iconBtnLabel}>{viewMode === 'paged' ? 'Pages' : 'Scroll'}</span>
         </button>
         <button
           style={{ ...s.iconBtn, ...(showSettings ? s.iconBtnActive : {}) }}
