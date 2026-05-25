@@ -13,7 +13,7 @@ const toSpeed = pct => Math.round(SPEED_MIN * Math.pow(SPEED_MAX / SPEED_MIN, pc
 const toPct   = spd => Math.log(Math.max(SPEED_MIN, spd) / SPEED_MIN) / Math.log(SPEED_MAX / SPEED_MIN)
 
 function speedLabel(speed) {
-  return (speed / 40).toFixed(1) + '×'
+  return (1 + (speed - 10) / 100).toFixed(1) + '×'
 }
 
 function SpeedSlider({ speed, onChange, onInteract }) {

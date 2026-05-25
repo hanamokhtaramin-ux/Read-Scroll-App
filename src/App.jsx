@@ -43,15 +43,22 @@ export default function App() {
   const [fontIndex, setFontIndex]     = useState(4)
   const [fontSize, setFontSize]       = useState(17)
   // Desktop preview: which device frame to show
-  const [desktopDevice, setDesktopDevice] = useState('iphone')
+  const [desktopDevice, setDesktopDevice]     = useState('iphone')
+  const [ipadOrientation, setIpadOrientation] = useState('portrait')
 
   const theme = THEMES[themeKey]
 
   const useFrame = vp.w >= FRAME_BREAKPOINT
 
-  // iPad frame scales to fit the current viewport height (with a little margin)
-  const ipadH = Math.min(1024, vp.h - 80)
-  const ipadW = Math.round(ipadH * 3 / 4)
+  // Portrait iPad: fits viewport height, 3:4 ratio
+  const ipadPortH = Math.min(1024, vp.h - 80)
+  const ipadPortW = Math.round(ipadPortH * 3 / 4)
+  // Landscape iPad: 4:3 ratio, constrained by both viewport width and height
+  const ipadLandW = Math.min(1200, vp.w - 80, Math.round((vp.h - 80) * 4 / 3))
+  const ipadLandH = Math.round(ipadLandW * 3 / 4)
+
+  const ipadW = ipadOrientation === 'landscape' ? ipadLandW : ipadPortW
+  const ipadH = ipadOrientation === 'landscape' ? ipadLandH : ipadPortH
 
   const frameW = useFrame ? (desktopDevice === 'ipad' ? ipadW : 393) : vp.w
   const frameH = useFrame ? (desktopDevice === 'ipad' ? ipadH : 852) : vp.h
@@ -100,6 +107,24 @@ export default function App() {
           </button>
         </div>
 
+        {/* Orientation picker — iPad only */}
+        {desktopDevice === 'ipad' && (
+          <div style={{ ...s.picker, marginTop: -6 }}>
+            <button
+              style={{ ...s.pickerBtn, ...s.pickerBtnSm, ...(ipadOrientation === 'portrait' ? s.pickerBtnActive : {}) }}
+              onClick={() => setIpadOrientation('portrait')}
+            >
+              Portrait
+            </button>
+            <button
+              style={{ ...s.pickerBtn, ...s.pickerBtnSm, ...(ipadOrientation === 'landscape' ? s.pickerBtnActive : {}) }}
+              onClick={() => setIpadOrientation('landscape')}
+            >
+              Landscape
+            </button>
+          </div>
+        )}
+
         {/* iPhone frame */}
         {desktopDevice === 'iphone' && (
           <div style={s.iphone}>
@@ -116,7 +141,7 @@ export default function App() {
         {/* iPad frame */}
         {desktopDevice === 'ipad' && (
           <div style={{ ...s.ipad, width: ipadW, height: ipadH }}>
-            <div style={s.ipadCamera} />
+            <div style={ipadOrientation === 'landscape' ? s.ipadCameraLand : s.ipadCamera} />
             <div style={{ ...s.screen, background: theme.bg }}>{screenContent}</div>
             <div style={s.homeBar}><div style={s.homeIndicator} /></div>
           </div>
@@ -217,6 +242,20 @@ const s = {
     background: '#0A0A0A',
     border: '1.5px solid #2C2C2E',
     zIndex: 150,
+  },
+  ipadCameraLand: {
+    position: 'absolute',
+    left: 10, top: '50%',
+    transform: 'translateY(-50%)',
+    width: 8, height: 8,
+    borderRadius: '50%',
+    background: '#0A0A0A',
+    border: '1.5px solid #2C2C2E',
+    zIndex: 150,
+  },
+  pickerBtnSm: {
+    padding: '5px 14px',
+    fontSize: 12,
   },
   screen: {
     flex: 1,
