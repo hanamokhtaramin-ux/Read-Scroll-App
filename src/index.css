@@ -53,3 +53,21 @@ body {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
+
+/* Page-turn animations for paged reading mode */
+@keyframes pageExitNext {
+  0%   { transform: perspective(700px) rotateY(0deg)   translateX(0);     opacity: 1; transform-origin: left center; }
+  100% { transform: perspective(700px) rotateY(-80deg) translateX(-20px); opacity: 0; transform-origin: left center; }
+}
+@keyframes pageEnterNext {
+  0%   { transform: perspective(700px) rotateY(80deg)  translateX(20px);  opacity: 0; transform-origin: right center; }
+  100% { transform: perspective(700px) rotateY(0deg)   translateX(0);     opacity: 1; transform-origin: right center; }
+}
+@keyframes pageExitPrev {
+  0%   { transform: perspective(700px) rotateY(0deg)   translateX(0);     opacity: 1; transform-origin: right center; }
+  100% { transform: perspective(700px) rotateY(80deg)  translateX(20px);  opacity: 0; transform-origin: right center; }
+}
+@keyframes pageEnterPrev {
+  0%   { transform: perspective(700px) rotateY(-80deg) translateX(-20px); opacity: 0; transform-origin: left center; }
+  100% { transform: perspective(700px) rotateY(0deg)   translateX(0);     opacity: 1; transform-origin: left center; }
+}

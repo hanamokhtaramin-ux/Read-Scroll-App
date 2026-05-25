@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, forwardRef } from 'react'
 
 const GOLD = '#C8A84B'
+const ANIM_MS = 360
 
 let pdfjsLib = null
 async function getPDFJS() {
@@ -11,7 +12,7 @@ async function getPDFJS() {
   return lib
 }
 
-async function renderPageToCanvas(pdf, pageNum, canvas, containerWidth) {
+async function renderPage(pdf, pageNum, canvas, containerWidth) {
   const page = await pdf.getPage(pageNum)
   const base = page.getViewport({ scale: 1.0 })
   const scale = (containerWidth / base.width) * window.devicePixelRatio
@@ -27,21 +28,25 @@ const PDFReader = forwardRef(function PDFReader(
   { fileData, viewMode, currentPage, onPageChange, initialProgress, onProgress, onPageInfo },
   scrollRef
 ) {
-  const containerRef  = useRef(null) // continuous
-  const canvasRef     = useRef(null) // paged
-  const pdfRef        = useRef(null)
-  const observerRef   = useRef(null)
+  const containerRef = useRef(null)  // continuous mode
+  const canvasRef    = useRef(null)  // paged: current page
+  const prevCanvasRef = useRef(null) // paged: outgoing page (animation)
+  const pdfRef       = useRef(null)
+  const observerRef  = useRef(null)
+  const prevPageRef  = useRef(null)  // null = first render
+  const animTimerRef = useRef(null)
 
   const [pdfLoaded, setPdfLoaded]   = useState(false)
   const [totalPages, setTotalPages] = useState(0)
   const [status, setStatus]         = useState('loading')
   const [error, setError]           = useState(null)
+  const [animDir, setAnimDir]       = useState(null)   // 'next' | 'prev'
+  const [isAnimating, setIsAnimating] = useState(false)
 
-  // Load PDF once
+  // ── Load PDF ──────────────────────────────────────────────────────────────
   useEffect(() => {
     let cancelled = false
-    setStatus('loading')
-    setPdfLoaded(false)
+    setStatus('loading'); setPdfLoaded(false)
     ;(async () => {
       try {
         const lib = await getPDFJS()
@@ -57,7 +62,7 @@ const PDFReader = forwardRef(function PDFReader(
     return () => { cancelled = true; observerRef.current?.disconnect() }
   }, [fileData])
 
-  // Continuous mode: render all pages
+  // ── Continuous mode: render all pages ────────────────────────────────────
   useEffect(() => {
     if (!pdfLoaded || viewMode !== 'continuous') return
     let cancelled = false
@@ -70,111 +75,138 @@ const PDFReader = forwardRef(function PDFReader(
     onPageInfo?.(1, totalPages)
 
     ;(async () => {
-      const W = 393
       for (let i = 1; i <= totalPages; i++) {
         if (cancelled) return
-        const canvas = document.createElement('canvas')
-        canvas.style.display = 'block'
-        canvas.dataset.page = i
-        await renderPageToCanvas(pdf, i, canvas, W)
+        const c = document.createElement('canvas')
+        c.style.display = 'block'
+        c.dataset.page = i
+        await renderPage(pdf, i, c, 393)
         if (cancelled) return
-        container.appendChild(canvas)
+        container.appendChild(c)
       }
 
       if (initialProgress > 0 && scrollRef?.current) {
         const el = scrollRef.current
         el.scrollTop = initialProgress * (el.scrollHeight - el.clientHeight)
       }
-
       setStatus('ready')
 
-      // IntersectionObserver for current page tracking
+      // IntersectionObserver for current-page tracking
       const el = scrollRef?.current
       if (!el) return
       observerRef.current?.disconnect()
       observerRef.current = new IntersectionObserver(entries => {
-        let topmost = null
-        for (const e of entries) {
-          if (e.isIntersecting) {
-            const p = parseInt(e.target.dataset.page)
-            if (topmost === null || p < topmost) topmost = p
-          }
-        }
-        if (topmost !== null) onPageInfo?.(topmost, totalPages)
+        let top = null
+        for (const e of entries)
+          if (e.isIntersecting) { const p = +e.target.dataset.page; if (top === null || p < top) top = p }
+        if (top !== null) onPageInfo?.(top, totalPages)
       }, { root: el, threshold: 0.1 })
       container.querySelectorAll('canvas[data-page]').forEach(c => observerRef.current.observe(c))
     })()
-
     return () => { cancelled = true; observerRef.current?.disconnect() }
   }, [pdfLoaded, viewMode, totalPages])
 
-  // Paged mode: render one page
+  // ── Paged mode: render one page with turn animation ───────────────────────
   useEffect(() => {
     if (!pdfLoaded || viewMode !== 'paged') return
     const pdf = pdfRef.current
     const canvas = canvasRef.current
+    const prevCanvas = prevCanvasRef.current
     if (!canvas) return
+
     const page = Math.max(1, Math.min(currentPage, totalPages))
-    renderPageToCanvas(pdf, page, canvas, 393)
+    const isFirst = prevPageRef.current === null
+    const dir = !isFirst && page > prevPageRef.current ? 'next' : 'prev'
+    prevPageRef.current = page
+
+    if (!isFirst && prevCanvas && canvas.width > 0) {
+      // Snapshot the current page into prevCanvas before overwriting
+      prevCanvas.width  = canvas.width
+      prevCanvas.height = canvas.height
+      prevCanvas.style.width  = canvas.style.width
+      prevCanvas.style.height = canvas.style.height
+      prevCanvas.getContext('2d').drawImage(canvas, 0, 0)
+
+      clearTimeout(animTimerRef.current)
+      setAnimDir(dir)
+      setIsAnimating(true)
+      animTimerRef.current = setTimeout(() => {
+        setIsAnimating(false)
+        setAnimDir(null)
+      }, ANIM_MS)
+    }
+
+    renderPage(pdf, page, canvas, 393)
       .then(() => { setStatus('ready'); onPageInfo?.(page, totalPages) })
       .catch(console.error)
   }, [pdfLoaded, viewMode, currentPage, totalPages])
 
-  // Scroll → progress (continuous only)
+  // ── Scroll → progress (continuous only) ──────────────────────────────────
   useEffect(() => {
     if (viewMode !== 'continuous') return
     const el = scrollRef?.current
     if (!el) return
-    const fn = () => {
-      const max = el.scrollHeight - el.clientHeight
-      if (max > 0) onProgress?.(el.scrollTop / max)
-    }
+    const fn = () => { const max = el.scrollHeight - el.clientHeight; if (max > 0) onProgress?.(el.scrollTop / max) }
     el.addEventListener('scroll', fn, { passive: true })
     return () => el.removeEventListener('scroll', fn)
   }, [scrollRef, onProgress, viewMode])
 
   if (status === 'error') {
-    return (
-      <div style={s.center}>
-        <div style={s.errorText}>Failed to load PDF</div>
-        <div style={s.errorDetail}>{error}</div>
-      </div>
-    )
+    return <div style={s.center}><div style={s.errorText}>Failed to load PDF</div><div style={s.errorDetail}>{error}</div></div>
   }
 
-  // Paged view
+  // ── Paged view ────────────────────────────────────────────────────────────
   if (viewMode === 'paged') {
+    const exitAnim  = `pageExit${animDir === 'next' ? 'Next' : 'Prev'} ${ANIM_MS}ms cubic-bezier(0.4,0,0.2,1) forwards`
+    const enterAnim = `pageEnter${animDir === 'next' ? 'Next' : 'Prev'} ${ANIM_MS}ms cubic-bezier(0.4,0,0.2,1) forwards`
+
     return (
       <div style={s.pagedWrapper}>
         {!pdfLoaded && <div style={s.center}><span style={s.spinner} /></div>}
-        <canvas ref={canvasRef} style={{ display: 'block', width: '100%' }} />
+
+        <div style={{ position: 'relative', overflow: 'hidden' }}>
+          {/* Outgoing page snapshot */}
+          <canvas
+            ref={prevCanvasRef}
+            style={{
+              position: 'absolute', top: 0, left: 0,
+              width: '100%', display: 'block',
+              visibility: isAnimating ? 'visible' : 'hidden',
+              animation: isAnimating && animDir ? exitAnim : undefined,
+              zIndex: 2, pointerEvents: 'none',
+            }}
+          />
+          {/* Current page */}
+          <canvas
+            ref={canvasRef}
+            style={{
+              display: 'block', width: '100%',
+              animation: isAnimating && animDir ? enterAnim : undefined,
+              position: 'relative', zIndex: 1,
+            }}
+          />
+        </div>
+
         {totalPages > 0 && (
           <div style={s.navRow}>
-            <button
-              style={{ ...s.navBtn, opacity: currentPage <= 1 ? 0.3 : 1 }}
-              onClick={() => onPageChange(Math.max(1, currentPage - 1))}
-              disabled={currentPage <= 1}
-            >← Prev</button>
+            <button style={{ ...s.navBtn, opacity: currentPage <= 1 ? 0.3 : 1 }}
+              onClick={() => !isAnimating && onPageChange(Math.max(1, currentPage - 1))}
+              disabled={currentPage <= 1 || isAnimating}>← Prev</button>
             <span style={s.pageLabel}>{currentPage} / {totalPages}</span>
-            <button
-              style={{ ...s.navBtn, opacity: currentPage >= totalPages ? 0.3 : 1 }}
-              onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
-              disabled={currentPage >= totalPages}
-            >Next →</button>
+            <button style={{ ...s.navBtn, opacity: currentPage >= totalPages ? 0.3 : 1 }}
+              onClick={() => !isAnimating && onPageChange(Math.min(totalPages, currentPage + 1))}
+              disabled={currentPage >= totalPages || isAnimating}>Next →</button>
           </div>
         )}
       </div>
     )
   }
 
-  // Continuous view
+  // ── Continuous view ───────────────────────────────────────────────────────
   return (
     <div style={s.wrapper}>
       {status === 'loading' && (
-        <div style={s.center}>
-          <span style={s.spinner} />
-          <span style={s.loadingText}>Loading PDF…</span>
-        </div>
+        <div style={s.center}><span style={s.spinner} /><span style={s.loadingText}>Loading PDF…</span></div>
       )}
       <div ref={containerRef} />
     </div>
