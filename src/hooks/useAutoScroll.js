@@ -1,10 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react'
 
-// Speed levels in pixels per second
-export const SPEEDS = [20, 40, 65, 95, 150]
-export const SPEED_LABELS = ['0.5×', '1×', '1.5×', '2×', '3×']
-
-export function useAutoScroll(containerRef, isPlaying, speedIndex, onEnd) {
+export function useAutoScroll(containerRef, isPlaying, speed, onEnd) {
   const rafRef = useRef(null)
   const lastTimeRef = useRef(null)
 
@@ -21,8 +17,6 @@ export function useAutoScroll(containerRef, isPlaying, speedIndex, onEnd) {
       stop()
       return
     }
-
-    const speed = SPEEDS[speedIndex] ?? SPEEDS[1]
 
     const tick = (timestamp) => {
       if (lastTimeRef.current === null) {
@@ -49,7 +43,7 @@ export function useAutoScroll(containerRef, isPlaying, speedIndex, onEnd) {
 
     rafRef.current = requestAnimationFrame(tick)
     return stop
-  }, [isPlaying, speedIndex, containerRef, stop, onEnd])
+  }, [isPlaying, speed, containerRef, stop, onEnd])
 
   return { stop }
 }

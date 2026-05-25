@@ -5,8 +5,7 @@ let pdfjsLib = null
 async function getPDFJS() {
   if (pdfjsLib) return pdfjsLib
   const lib = await import('pdfjs-dist')
-  const workerUrl = /* @vite-ignore */ new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).href
-  lib.GlobalWorkerOptions.workerSrc = workerUrl
+  lib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${lib.version}/pdf.worker.min.js`
   pdfjsLib = lib
   return lib
 }

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react'
 import { useApp } from '../App'
-import { useAutoScroll, SPEED_LABELS } from '../hooks/useAutoScroll'
+import { useAutoScroll } from '../hooks/useAutoScroll'
 import { updateBook } from '../utils/storage'
 import PDFReader from './PDFReader'
 import EPUBReader from './EPUBReader'
@@ -17,7 +17,7 @@ export default function Reader({ book, onBack, onUpdateBook }) {
   const manualScrollTimer = useRef(null)
 
   const [isPlaying, setIsPlaying] = useState(false)
-  const [speedIndex, setSpeedIndex] = useState(1)
+  const [speed, setSpeed] = useState(40)
   const [tapCard, setTapCard] = useState(null) // { x, y }
   const [progress, setProgress] = useState(book.progress || 0)
   const [pageInfo, setPageInfo] = useState({ current: 1, total: 1 })
@@ -48,7 +48,7 @@ export default function Reader({ book, onBack, onUpdateBook }) {
     setIsPlaying(false)
   }, [])
 
-  useAutoScroll(scrollRef, isPlaying, speedIndex, handleEnd)
+  useAutoScroll(scrollRef, isPlaying, speed, handleEnd)
 
   // Save progress debounced
   const saveTimer = useRef(null)
@@ -154,14 +154,14 @@ export default function Reader({ book, onBack, onUpdateBook }) {
 
       {/* Tap card overlay */}
       {tapCard && (
-        <div style={s.tapOverlay} onPointerDown={() => setTapCard(null)}>
+        <div style={s.tapOverlay} onClick={e => { e.stopPropagation(); setTapCard(null) }}>
           <TapCard
             x={tapCard.x}
             y={tapCard.y}
             isPlaying={isPlaying}
             onPlay={() => setIsPlaying(v => !v)}
-            speedIndex={speedIndex}
-            onSpeed={setSpeedIndex}
+            speed={speed}
+            onSpeed={setSpeed}
             onRestart={() => { handleRestart(); setTapCard(null) }}
             onClose={() => setTapCard(null)}
           />
