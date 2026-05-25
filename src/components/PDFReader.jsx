@@ -75,7 +75,7 @@ const PDFReader = forwardRef(function PDFReader(
         const c = document.createElement('canvas')
         c.style.display = 'block'
         c.dataset.page = i
-        await renderPage(pdf, i, c, 393)
+        await renderPage(pdf, i, c, container.clientWidth || 393)
         if (cancelled) return
         container.appendChild(c)
       }

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import SettingsPanel from './SettingsPanel'
+import { useApp } from '../App'
 
 const GOLD = '#C8A84B'
 const CARD_W = 300
@@ -53,6 +54,7 @@ function SpeedSlider({ speed, onChange, onInteract }) {
 }
 
 export default function TapCard({ x, y, isPlaying, onPlay, speed, onSpeed, viewMode, onViewMode, onRestart, onClose }) {
+  const { frameW, frameH } = useApp()
   const [showSettings, setShowSettings] = useState(false)
   const timerRef = useRef(null)
 
@@ -73,8 +75,8 @@ export default function TapCard({ x, y, isPlaying, onPlay, speed, onSpeed, viewM
     }
   }
 
-  const left = Math.min(Math.max(x - CARD_W / 2, 10), 393 - CARD_W - 10)
-  const top  = Math.min(Math.max(y - 20, 54), 852 - (showSettings ? 380 : 220))
+  const left = Math.min(Math.max(x - CARD_W / 2, 10), frameW - CARD_W - 10)
+  const top  = Math.min(Math.max(y - 20, 54), frameH - (showSettings ? 380 : 220))
 
   return (
     <div

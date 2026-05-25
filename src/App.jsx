@@ -1,4 +1,4 @@
-import React, { useState, createContext, useContext } from 'react'
+import React, { useState, useEffect, createContext, useContext } from 'react'
 import Library from './components/Library'
 import Reader from './components/Reader'
 
@@ -23,7 +23,21 @@ export const FONT_SIZES = [13, 15, 17, 19, 22, 26]
 export const AppContext = createContext(null)
 export const useApp = () => useContext(AppContext)
 
+// Below this viewport width we assume we're running on a real device (no frame)
+const FRAME_BREAKPOINT = 1100
+
+function useWindowSize() {
+  const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight })
+  useEffect(() => {
+    const fn = () => setSize({ w: window.innerWidth, h: window.innerHeight })
+    window.addEventListener('resize', fn)
+    return () => window.removeEventListener('resize', fn)
+  }, [])
+  return size
+}
+
 export default function App() {
+  const vp = useWindowSize()
   const [currentBook, setCurrentBook] = useState(null)
   const [themeKey, setThemeKey]       = useState('paper')
   const [fontIndex, setFontIndex]     = useState(4)
@@ -31,10 +45,40 @@ export default function App() {
 
   const theme = THEMES[themeKey]
 
+  // On a real device (iPhone or iPad running in Capacitor, or any narrow browser)
+  // we fill the screen. On a wide desktop we show a device mockup for preview.
+  const useFrame = vp.w >= FRAME_BREAKPOINT
+  const frameW   = useFrame ? 393 : vp.w
+  const frameH   = useFrame ? 852 : vp.h
+  const isTablet = frameW >= 600   // tablet layout threshold
+
+  const ctx = {
+    theme, themeKey, setThemeKey, THEMES,
+    fontIndex, setFontIndex, FONT_FAMILIES,
+    fontSize, setFontSize, FONT_SIZES,
+    frameW, frameH, isTablet,
+  }
+
+  const screenContent = currentBook
+    ? <Reader book={currentBook} onBack={() => setCurrentBook(null)} />
+    : <Library onOpenBook={setCurrentBook} />
+
+  // ── Full-screen mode (real device) ───────────────────────────────────────
+  if (!useFrame) {
+    return (
+      <AppContext.Provider value={ctx}>
+        <div style={{ width: vp.w, height: vp.h, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: theme.bg }}>
+          {screenContent}
+        </div>
+      </AppContext.Provider>
+    )
+  }
+
+  // ── iPhone mockup (desktop web preview) ──────────────────────────────────
   return (
-    <AppContext.Provider value={{ theme, themeKey, setThemeKey, THEMES, fontIndex, setFontIndex, FONT_FAMILIES, fontSize, setFontSize, FONT_SIZES }}>
+    <AppContext.Provider value={ctx}>
       <div style={s.page}>
-        {/* Left side button */}
+        {/* Left side buttons */}
         <div style={{ ...s.sideBtn, left: -3, top: 140, height: 34 }} />
         <div style={{ ...s.sideBtn, left: -3, top: 188, height: 64 }} />
         <div style={{ ...s.sideBtn, left: -3, top: 266, height: 64 }} />
@@ -48,10 +92,7 @@ export default function App() {
 
         {/* Screen */}
         <div style={{ ...s.screen, background: theme.bg }}>
-          {currentBook
-            ? <Reader book={currentBook} onBack={() => setCurrentBook(null)} onUpdateBook={setCurrentBook} />
-            : <Library onOpenBook={setCurrentBook} />
-          }
+          {screenContent}
         </div>
 
         {/* Home indicator */}

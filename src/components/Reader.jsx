@@ -9,7 +9,7 @@ import TapCard from './TapCard'
 const GOLD = '#C8A84B'
 
 export default function Reader({ book, onBack }) {
-  const { theme } = useApp()
+  const { theme, isTablet } = useApp()
 
   const scrollRef = useRef(null)
   const rootRef   = useRef(null)
@@ -126,30 +126,33 @@ export default function Reader({ book, onBack }) {
 
       {/* Scrollable content */}
       <div ref={scrollRef} data-scroll="true" style={scrollAreaStyle} onClick={handleContentTap}>
-        {book.type === 'pdf' ? (
-          <PDFReader
-            ref={scrollRef}
-            fileData={book.fileData}
-            viewMode={viewMode}
-            currentPage={currentPdfPage}
-            onPageChange={setCurrentPdfPage}
-            initialProgress={book.progress || 0}
-            onProgress={handleProgress}
-            onPageInfo={handlePageInfo}
-          />
-        ) : (
-          <EPUBReader
-            ref={scrollRef}
-            fileData={book.fileData}
-            viewMode={viewMode}
-            chapterIndex={chapterIndex}
-            onChapterChange={handleChapterChange}
-            initialProgress={book.progress || 0}
-            onProgress={handleProgress}
-            onPageInfo={handlePageInfo}
-          />
-        )}
-        <div style={{ height: 20 }} />
+        {/* On tablet, center and constrain EPUB text width for comfortable reading */}
+        <div style={isTablet && book.type === 'epub' ? s.tabletInner : s.fullInner}>
+          {book.type === 'pdf' ? (
+            <PDFReader
+              ref={scrollRef}
+              fileData={book.fileData}
+              viewMode={viewMode}
+              currentPage={currentPdfPage}
+              onPageChange={setCurrentPdfPage}
+              initialProgress={book.progress || 0}
+              onProgress={handleProgress}
+              onPageInfo={handlePageInfo}
+            />
+          ) : (
+            <EPUBReader
+              ref={scrollRef}
+              fileData={book.fileData}
+              viewMode={viewMode}
+              chapterIndex={chapterIndex}
+              onChapterChange={handleChapterChange}
+              initialProgress={book.progress || 0}
+              onProgress={handleProgress}
+              onPageInfo={handlePageInfo}
+            />
+          )}
+          <div style={{ height: 20 }} />
+        </div>
       </div>
 
       {/* Progress bar */}
@@ -195,4 +198,6 @@ const s = {
   progressTrack: { height: 3, flexShrink: 0 },
   progressBar: { height: '100%', background: GOLD, transition: 'width 0.3s ease', borderRadius: '0 2px 2px 0' },
   tapOverlay: { position: 'absolute', inset: 0, zIndex: 70 },
+  fullInner:  { width: '100%', height: '100%' },
+  tabletInner: { width: '100%', maxWidth: 700, marginLeft: 'auto', marginRight: 'auto' },
 }
