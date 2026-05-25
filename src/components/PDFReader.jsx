@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState, forwardRef } from 'react'
 
 const GOLD = '#C8A84B'
-const ANIM_MS = 360
 
 let pdfjsLib = null
 async function getPDFJS() {
@@ -28,20 +27,16 @@ const PDFReader = forwardRef(function PDFReader(
   { fileData, viewMode, currentPage, onPageChange, initialProgress, onProgress, onPageInfo },
   scrollRef
 ) {
-  const containerRef = useRef(null)  // continuous mode
-  const canvasRef    = useRef(null)  // paged: current page
-  const prevCanvasRef = useRef(null) // paged: outgoing page (animation)
+  const containerRef = useRef(null)  // continuous
+  const hScrollRef   = useRef(null)  // paged horizontal
   const pdfRef       = useRef(null)
   const observerRef  = useRef(null)
-  const prevPageRef  = useRef(null)  // null = first render
-  const animTimerRef = useRef(null)
+  const isProgramRef = useRef(false)
 
-  const [pdfLoaded, setPdfLoaded]   = useState(false)
+  const [pdfLoaded, setPdfLoaded] = useState(false)
   const [totalPages, setTotalPages] = useState(0)
   const [status, setStatus]         = useState('loading')
   const [error, setError]           = useState(null)
-  const [animDir, setAnimDir]       = useState(null)   // 'next' | 'prev'
-  const [isAnimating, setIsAnimating] = useState(false)
 
   // ── Load PDF ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -62,7 +57,7 @@ const PDFReader = forwardRef(function PDFReader(
     return () => { cancelled = true; observerRef.current?.disconnect() }
   }, [fileData])
 
-  // ── Continuous mode: render all pages ────────────────────────────────────
+  // ── Continuous: render all pages vertically ───────────────────────────────
   useEffect(() => {
     if (!pdfLoaded || viewMode !== 'continuous') return
     let cancelled = false
@@ -84,14 +79,12 @@ const PDFReader = forwardRef(function PDFReader(
         if (cancelled) return
         container.appendChild(c)
       }
-
       if (initialProgress > 0 && scrollRef?.current) {
         const el = scrollRef.current
         el.scrollTop = initialProgress * (el.scrollHeight - el.clientHeight)
       }
       setStatus('ready')
 
-      // IntersectionObserver for current-page tracking
       const el = scrollRef?.current
       if (!el) return
       observerRef.current?.disconnect()
@@ -106,40 +99,57 @@ const PDFReader = forwardRef(function PDFReader(
     return () => { cancelled = true; observerRef.current?.disconnect() }
   }, [pdfLoaded, viewMode, totalPages])
 
-  // ── Paged mode: render one page with turn animation ───────────────────────
+  // ── Paged: render all pages in horizontal snap container ──────────────────
   useEffect(() => {
     if (!pdfLoaded || viewMode !== 'paged') return
+    const container = hScrollRef.current
+    if (!container) return
+    let cancelled = false
     const pdf = pdfRef.current
-    const canvas = canvasRef.current
-    const prevCanvas = prevCanvasRef.current
-    if (!canvas) return
+    container.innerHTML = ''
+    setStatus('loading')
 
-    const page = Math.max(1, Math.min(currentPage, totalPages))
-    const isFirst = prevPageRef.current === null
-    const dir = !isFirst && page > prevPageRef.current ? 'next' : 'prev'
-    prevPageRef.current = page
+    ;(async () => {
+      const w = container.clientWidth || 393
+      for (let i = 1; i <= totalPages; i++) {
+        if (cancelled) return
+        const panel = document.createElement('div')
+        panel.style.cssText = [
+          'flex-shrink:0', 'width:100%', 'height:100%',
+          'overflow-y:auto', 'overflow-x:hidden',
+          'scroll-snap-align:start',
+          'display:flex', 'flex-direction:column', 'align-items:center',
+          'padding-top:8px',
+        ].join(';')
+        panel.dataset.page = i
+        const c = document.createElement('canvas')
+        c.style.cssText = 'display:block;width:100%;flex-shrink:0;'
+        await renderPage(pdf, i, c, w)
+        if (cancelled) return
+        panel.appendChild(c)
+        container.appendChild(panel)
+      }
+      if (cancelled) return
+      setStatus('ready')
+      onPageInfo?.(currentPage, totalPages)
+      isProgramRef.current = true
+      container.scrollLeft = (currentPage - 1) * container.clientWidth
+      setTimeout(() => { isProgramRef.current = false }, 150)
+    })()
+    return () => { cancelled = true }
+  }, [pdfLoaded, viewMode, totalPages])
 
-    if (!isFirst && prevCanvas && canvas.width > 0) {
-      // Snapshot the current page into prevCanvas before overwriting
-      prevCanvas.width  = canvas.width
-      prevCanvas.height = canvas.height
-      prevCanvas.style.width  = canvas.style.width
-      prevCanvas.style.height = canvas.style.height
-      prevCanvas.getContext('2d').drawImage(canvas, 0, 0)
-
-      clearTimeout(animTimerRef.current)
-      setAnimDir(dir)
-      setIsAnimating(true)
-      animTimerRef.current = setTimeout(() => {
-        setIsAnimating(false)
-        setAnimDir(null)
-      }, ANIM_MS)
-    }
-
-    renderPage(pdf, page, canvas, 393)
-      .then(() => { setStatus('ready'); onPageInfo?.(page, totalPages) })
-      .catch(console.error)
-  }, [pdfLoaded, viewMode, currentPage, totalPages])
+  // ── Scroll to currentPage in paged mode ───────────────────────────────────
+  useEffect(() => {
+    if (viewMode !== 'paged' || status !== 'ready') return
+    const el = hScrollRef.current
+    if (!el) return
+    const target = (currentPage - 1) * el.clientWidth
+    if (Math.abs(el.scrollLeft - target) < 5) return
+    isProgramRef.current = true
+    el.scrollTo({ left: target, behavior: 'smooth' })
+    setTimeout(() => { isProgramRef.current = false }, 700)
+  }, [currentPage, viewMode, status])
 
   // ── Scroll → progress (continuous only) ──────────────────────────────────
   useEffect(() => {
@@ -151,51 +161,46 @@ const PDFReader = forwardRef(function PDFReader(
     return () => el.removeEventListener('scroll', fn)
   }, [scrollRef, onProgress, viewMode])
 
+  function handlePagedScroll() {
+    if (isProgramRef.current) return
+    const el = hScrollRef.current
+    if (!el) return
+    const page = Math.round(el.scrollLeft / el.clientWidth) + 1
+    const p = Math.max(1, Math.min(page, totalPages))
+    if (p !== currentPage) {
+      onPageChange(p)
+      onPageInfo?.(p, totalPages)
+    }
+  }
+
   if (status === 'error') {
     return <div style={s.center}><div style={s.errorText}>Failed to load PDF</div><div style={s.errorDetail}>{error}</div></div>
   }
 
   // ── Paged view ────────────────────────────────────────────────────────────
   if (viewMode === 'paged') {
-    const exitAnim  = `pageExit${animDir === 'next' ? 'Next' : 'Prev'} ${ANIM_MS}ms cubic-bezier(0.4,0,0.2,1) forwards`
-    const enterAnim = `pageEnter${animDir === 'next' ? 'Next' : 'Prev'} ${ANIM_MS}ms cubic-bezier(0.4,0,0.2,1) forwards`
-
     return (
       <div style={s.pagedWrapper}>
-        {!pdfLoaded && <div style={s.center}><span style={s.spinner} /></div>}
-
-        <div style={{ position: 'relative', overflow: 'hidden' }}>
-          {/* Outgoing page snapshot */}
-          <canvas
-            ref={prevCanvasRef}
-            style={{
-              position: 'absolute', top: 0, left: 0,
-              width: '100%', display: 'block',
-              visibility: isAnimating ? 'visible' : 'hidden',
-              animation: isAnimating && animDir ? exitAnim : undefined,
-              zIndex: 2, pointerEvents: 'none',
-            }}
-          />
-          {/* Current page */}
-          <canvas
-            ref={canvasRef}
-            style={{
-              display: 'block', width: '100%',
-              animation: isAnimating && animDir ? enterAnim : undefined,
-              position: 'relative', zIndex: 1,
-            }}
-          />
-        </div>
-
-        {totalPages > 0 && (
+        {status === 'loading' && (
+          <div style={s.loadOverlay}>
+            <span style={s.spinner} />
+            <span style={s.loadingText}>Loading pages…</span>
+          </div>
+        )}
+        <div ref={hScrollRef} style={s.hScroll} onScroll={handlePagedScroll} />
+        {status === 'ready' && totalPages > 0 && (
           <div style={s.navRow}>
-            <button style={{ ...s.navBtn, opacity: currentPage <= 1 ? 0.3 : 1 }}
-              onClick={() => !isAnimating && onPageChange(Math.max(1, currentPage - 1))}
-              disabled={currentPage <= 1 || isAnimating}>← Prev</button>
+            <button
+              style={{ ...s.navBtn, opacity: currentPage <= 1 ? 0.3 : 1 }}
+              onClick={() => currentPage > 1 && onPageChange(currentPage - 1)}
+              disabled={currentPage <= 1}
+            >← Prev</button>
             <span style={s.pageLabel}>{currentPage} / {totalPages}</span>
-            <button style={{ ...s.navBtn, opacity: currentPage >= totalPages ? 0.3 : 1 }}
-              onClick={() => !isAnimating && onPageChange(Math.min(totalPages, currentPage + 1))}
-              disabled={currentPage >= totalPages || isAnimating}>Next →</button>
+            <button
+              style={{ ...s.navBtn, opacity: currentPage >= totalPages ? 0.3 : 1 }}
+              onClick={() => currentPage < totalPages && onPageChange(currentPage + 1)}
+              disabled={currentPage >= totalPages}
+            >Next →</button>
           </div>
         )}
       </div>
@@ -216,14 +221,30 @@ const PDFReader = forwardRef(function PDFReader(
 export default PDFReader
 
 const s = {
-  wrapper: { width: '100%' },
-  pagedWrapper: { width: '100%' },
+  wrapper:      { width: '100%' },
+  pagedWrapper: { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' },
+  hScroll: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'row',
+    overflowX: 'auto',
+    overflowY: 'hidden',
+    scrollSnapType: 'x mandatory',
+    WebkitOverflowScrolling: 'touch',
+    msOverflowStyle: 'none',
+    scrollbarWidth: 'none',
+  },
+  loadOverlay: {
+    position: 'absolute', inset: 0,
+    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+    gap: 12, zIndex: 5,
+  },
   center: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300, gap: 12 },
   spinner: { display: 'inline-block', width: 28, height: 28, border: '3px solid rgba(200,168,75,0.2)', borderTopColor: GOLD, borderRadius: '50%', animation: 'spin 0.8s linear infinite' },
   loadingText: { fontSize: 13, color: 'rgba(255,255,255,0.4)' },
   errorText: { fontSize: 15, fontWeight: 600, color: '#FF3B30' },
   errorDetail: { fontSize: 12, color: 'rgba(255,255,255,0.4)', textAlign: 'center', padding: '0 20px' },
-  navRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 22px 32px' },
+  navRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 22px 16px', borderTop: '1px solid rgba(128,128,128,0.15)', flexShrink: 0 },
   navBtn: { background: 'none', border: `1px solid ${GOLD}`, color: GOLD, padding: '8px 16px', borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'opacity 0.15s' },
   pageLabel: { fontSize: 12, color: 'rgba(128,128,128,0.6)', fontWeight: 500 },
 }

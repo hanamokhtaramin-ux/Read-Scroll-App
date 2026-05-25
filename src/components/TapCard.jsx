@@ -4,7 +4,7 @@ import SettingsPanel from './SettingsPanel'
 const GOLD = '#C8A84B'
 const CARD_W = 300
 const CARD_DISMISS_SECS = 5
-const SPEED_MIN = 0.5  // px/s
+const SPEED_MIN = 0.1  // px/s
 const SPEED_MAX = 150  // px/s
 
 function speedLabel(speed) {

@@ -4,7 +4,6 @@ import { useApp } from '../App'
 import HighlightPicker from './HighlightPicker'
 
 const GOLD = '#C8A84B'
-const ANIM_MS = 360
 
 const EPUBReader = forwardRef(function EPUBReader(
   { fileData, viewMode, chapterIndex, onChapterChange, initialProgress, onProgress, onPageInfo },
@@ -12,20 +11,17 @@ const EPUBReader = forwardRef(function EPUBReader(
 ) {
   const { theme, fontIndex, FONT_FAMILIES, fontSize } = useApp()
 
-  const [epubData, setEpubData]       = useState(null)
-  const [chapterHTML, setChapterHTML] = useState('')
-  const [prevHTML, setPrevHTML]       = useState('')   // outgoing chapter during animation
-  const [allHTML, setAllHTML]         = useState('')
-  const [loadingMsg, setLoadingMsg]   = useState('')
-  const [status, setStatus]           = useState('loading')
-  const [animDir, setAnimDir]         = useState(null)
-  const [isAnimating, setIsAnimating] = useState(false)
-  const [highlight, setHighlight]     = useState(null)
+  const [epubData, setEpubData]             = useState(null)
+  const [allHTML, setAllHTML]               = useState('')
+  const [pagedChapters, setPagedChapters]   = useState([])
+  const [loadingMsg, setLoadingMsg]         = useState('')
+  const [status, setStatus]                 = useState('loading')
+  const [highlight, setHighlight]           = useState(null)
 
-  const contentRef    = useRef(null)
-  const wrapperRef    = useRef(null)
-  const prevIdxRef    = useRef(null)   // null = first load
-  const animTimerRef  = useRef(null)
+  const contentRef   = useRef(null)
+  const wrapperRef   = useRef(null)
+  const hScrollRef   = useRef(null)
+  const isProgramRef = useRef(false)
 
   const fontFamily = FONT_FAMILIES[fontIndex]?.value || FONT_FAMILIES[4].value
 
@@ -36,54 +32,57 @@ const EPUBReader = forwardRef(function EPUBReader(
       .catch(err => { console.error(err); setStatus('error') })
   }, [fileData])
 
-  // ── Paged mode: load one chapter + animate ────────────────────────────────
+  // ── Paged mode: load all chapters into horizontal panels ──────────────────
   useEffect(() => {
     if (!epubData || viewMode !== 'paged') return
-
-    const isFirst = prevIdxRef.current === null
-    const dir = !isFirst && chapterIndex > prevIdxRef.current ? 'next' : 'prev'
-    prevIdxRef.current = chapterIndex
-
-    // Start exit animation with the OLD HTML before loading new chapter
-    if (!isFirst && chapterHTML) {
-      setPrevHTML(chapterHTML)
-      clearTimeout(animTimerRef.current)
-      setAnimDir(dir)
-      setIsAnimating(true)
-      animTimerRef.current = setTimeout(() => {
-        setPrevHTML('')
-        setIsAnimating(false)
-        setAnimDir(null)
-      }, ANIM_MS)
-    }
-
-    setStatus('loading')
+    let cancelled = false
     const { zip, opfDir, spine } = epubData
-    const item = spine[chapterIndex]
-    if (!item) return
+    setStatus('loading')
+    setPagedChapters([])
+    setLoadingMsg('')
 
-    loadChapter(zip, opfDir, item.href)
-      .then(html => {
-        setChapterHTML(html)
-        setStatus('ready')
-        onPageInfo?.(chapterIndex + 1, spine.length)
+    ;(async () => {
+      const parts = []
+      for (let i = 0; i < spine.length; i++) {
+        if (cancelled) return
+        setLoadingMsg(`Loading chapter ${i + 1} of ${spine.length}…`)
+        const html = await loadChapter(zip, opfDir, spine[i].href)
+        parts.push(html)
+      }
+      if (cancelled) return
+      setPagedChapters(parts)
+      setStatus('ready')
+      setLoadingMsg('')
+      onPageInfo?.(chapterIndex + 1, spine.length)
+    })()
+    return () => { cancelled = true }
+  }, [epubData, viewMode])
 
-        if (isFirst && initialProgress > 0 && scrollRef?.current) {
-          requestAnimationFrame(() => {
-            const el = scrollRef.current
-            if (el) el.scrollTop = initialProgress * (el.scrollHeight - el.clientHeight)
-          })
-        } else if (!isFirst && scrollRef?.current) {
-          scrollRef.current.scrollTop = 0
-        }
-      })
-      .catch(err => {
-        setChapterHTML(`<p style="color:#FF3B30">Chapter error: ${err.message}</p>`)
-        setStatus('ready')
-      })
-  }, [epubData, chapterIndex, viewMode])
+  // ── After chapters load, snap to current chapter without animation ─────────
+  useEffect(() => {
+    if (pagedChapters.length === 0) return
+    requestAnimationFrame(() => {
+      const el = hScrollRef.current
+      if (!el) return
+      isProgramRef.current = true
+      el.scrollLeft = chapterIndex * el.clientWidth
+      setTimeout(() => { isProgramRef.current = false }, 150)
+    })
+  }, [pagedChapters])
 
-  // ── Continuous mode: load ALL chapters ───────────────────────────────────
+  // ── Scroll to chapterIndex when it changes ────────────────────────────────
+  useEffect(() => {
+    if (viewMode !== 'paged' || pagedChapters.length === 0) return
+    const el = hScrollRef.current
+    if (!el) return
+    const target = chapterIndex * el.clientWidth
+    if (Math.abs(el.scrollLeft - target) < 5) return
+    isProgramRef.current = true
+    el.scrollTo({ left: target, behavior: 'smooth' })
+    setTimeout(() => { isProgramRef.current = false }, 700)
+  }, [chapterIndex, viewMode])
+
+  // ── Continuous mode: load all chapters ───────────────────────────────────
   useEffect(() => {
     if (!epubData || viewMode !== 'continuous') return
     let cancelled = false
@@ -101,7 +100,7 @@ const EPUBReader = forwardRef(function EPUBReader(
       if (cancelled) return
       setAllHTML(parts.join(''))
       setStatus('ready'); setLoadingMsg('')
-      onPageInfo?.(1, spine.length)
+      onPageInfo?.(1, epubData.spine.length)
       if (initialProgress > 0 && scrollRef?.current) {
         requestAnimationFrame(() => {
           const el = scrollRef.current
@@ -112,17 +111,19 @@ const EPUBReader = forwardRef(function EPUBReader(
     return () => { cancelled = true }
   }, [epubData, viewMode])
 
-  // ── Scroll → progress ────────────────────────────────────────────────────
+  // ── Scroll → progress (continuous only) ──────────────────────────────────
   useEffect(() => {
+    if (viewMode !== 'continuous') return
     const el = scrollRef?.current
     if (!el) return
     const fn = () => { const max = el.scrollHeight - el.clientHeight; if (max > 0) onProgress?.(el.scrollTop / max) }
     el.addEventListener('scroll', fn, { passive: true })
     return () => el.removeEventListener('scroll', fn)
-  }, [scrollRef, onProgress])
+  }, [scrollRef, onProgress, viewMode])
 
-  // ── Text highlight picker ─────────────────────────────────────────────────
+  // ── Text highlight (continuous only) ─────────────────────────────────────
   useEffect(() => {
+    if (viewMode !== 'continuous') return
     const el = contentRef.current
     if (!el) return
     function handlePointerUp() {
@@ -136,7 +137,7 @@ const EPUBReader = forwardRef(function EPUBReader(
     }
     el.addEventListener('pointerup', handlePointerUp)
     return () => el.removeEventListener('pointerup', handlePointerUp)
-  }, [chapterHTML, allHTML])
+  }, [allHTML, viewMode])
 
   function applyHighlight(bgColor) {
     const sel = window.getSelection()
@@ -153,72 +154,74 @@ const EPUBReader = forwardRef(function EPUBReader(
     setHighlight(null)
   }
 
-  const totalChapters = epubData?.spine.length || 1
+  function handlePagedScroll() {
+    if (isProgramRef.current || !epubData) return
+    const el = hScrollRef.current
+    if (!el) return
+    const idx = Math.round(el.scrollLeft / el.clientWidth)
+    const i = Math.max(0, Math.min(idx, epubData.spine.length - 1))
+    if (i !== chapterIndex) {
+      onChapterChange(i)
+      onPageInfo?.(i + 1, epubData.spine.length)
+    }
+  }
+
   const contentStyle = { fontFamily, fontSize: `${fontSize}px`, lineHeight: 1.85, color: theme.text, letterSpacing: '0.01em' }
 
-  const exitAnim  = `pageExit${animDir === 'next' ? 'Next' : 'Prev'} ${ANIM_MS}ms cubic-bezier(0.4,0,0.2,1) forwards`
-  const enterAnim = `pageEnter${animDir === 'next' ? 'Next' : 'Prev'} ${ANIM_MS}ms cubic-bezier(0.4,0,0.2,1) forwards`
+  // ── Paged view ────────────────────────────────────────────────────────────
+  if (viewMode === 'paged') {
+    return (
+      <div ref={wrapperRef} style={s.pagedWrapper}>
+        {status === 'loading' && (
+          <div style={s.pagedLoadOverlay}>
+            <span style={s.spinner} />
+            {loadingMsg && <span style={s.loadMsg}>{loadingMsg}</span>}
+          </div>
+        )}
+        {pagedChapters.length > 0 && (
+          <div ref={hScrollRef} style={s.hScroll} onScroll={handlePagedScroll}>
+            {pagedChapters.map((html, i) => (
+              <div
+                key={i}
+                style={{ ...s.chapterPanel, ...contentStyle }}
+                dangerouslySetInnerHTML={{ __html: html }}
+              />
+            ))}
+          </div>
+        )}
+        {status === 'ready' && epubData && (
+          <div style={s.navRow}>
+            <button
+              style={{ ...s.navBtn, opacity: chapterIndex === 0 ? 0.3 : 1 }}
+              onClick={() => chapterIndex > 0 && onChapterChange(chapterIndex - 1)}
+              disabled={chapterIndex === 0}
+            >← Prev</button>
+            <span style={s.pageLabel}>{chapterIndex + 1} / {epubData.spine.length}</span>
+            <button
+              style={{ ...s.navBtn, opacity: chapterIndex >= epubData.spine.length - 1 ? 0.3 : 1 }}
+              onClick={() => chapterIndex < epubData.spine.length - 1 && onChapterChange(chapterIndex + 1)}
+              disabled={chapterIndex >= epubData.spine.length - 1}
+            >Next →</button>
+          </div>
+        )}
+      </div>
+    )
+  }
 
+  // ── Continuous view ───────────────────────────────────────────────────────
   return (
     <div ref={wrapperRef} style={s.wrapper}>
-      {/* Loading */}
       {status === 'loading' && (
         <div style={s.loadOverlay}>
           <span style={s.spinner} />
           {loadingMsg && <span style={s.loadMsg}>{loadingMsg}</span>}
         </div>
       )}
-
-      {/* Paged mode: outgoing chapter (animating out) + incoming chapter */}
-      {viewMode === 'paged' ? (
-        <div style={{ position: 'relative', overflow: 'hidden' }}>
-          {prevHTML && (
-            <div
-              style={{
-                position: 'absolute', top: 0, left: 0, right: 0,
-                pointerEvents: 'none', zIndex: 2,
-                animation: isAnimating && animDir ? exitAnim : undefined,
-                ...s.content, ...contentStyle,
-              }}
-              dangerouslySetInnerHTML={{ __html: prevHTML }}
-            />
-          )}
-          <div
-            ref={contentRef}
-            style={{
-              ...s.content, ...contentStyle,
-              animation: isAnimating && animDir ? enterAnim : undefined,
-              position: 'relative', zIndex: 1,
-            }}
-            dangerouslySetInnerHTML={{ __html: chapterHTML }}
-          />
-        </div>
-      ) : (
-        /* Continuous mode: all chapters */
-        <div
-          ref={contentRef}
-          style={{ ...s.content, ...contentStyle }}
-          dangerouslySetInnerHTML={{ __html: allHTML }}
-        />
-      )}
-
-      {/* Paged chapter navigation */}
-      {viewMode === 'paged' && epubData && (
-        <div style={s.navRow}>
-          <button
-            style={{ ...s.navBtn, opacity: chapterIndex === 0 || isAnimating ? 0.3 : 1 }}
-            onClick={() => !isAnimating && onChapterChange(Math.max(0, chapterIndex - 1))}
-            disabled={chapterIndex === 0 || isAnimating}
-          >← Prev</button>
-          <span style={s.pageLabel}>{chapterIndex + 1} / {totalChapters}</span>
-          <button
-            style={{ ...s.navBtn, opacity: chapterIndex >= totalChapters - 1 || isAnimating ? 0.3 : 1 }}
-            onClick={() => !isAnimating && onChapterChange(Math.min(totalChapters - 1, chapterIndex + 1))}
-            disabled={chapterIndex >= totalChapters - 1 || isAnimating}
-          >Next →</button>
-        </div>
-      )}
-
+      <div
+        ref={contentRef}
+        style={{ ...s.content, ...contentStyle }}
+        dangerouslySetInnerHTML={{ __html: allHTML }}
+      />
       {highlight && (
         <HighlightPicker position={highlight} onColor={applyHighlight} onClose={() => setHighlight(null)} />
       )}
@@ -229,12 +232,41 @@ const EPUBReader = forwardRef(function EPUBReader(
 export default EPUBReader
 
 const s = {
-  wrapper: { width: '100%', position: 'relative' },
+  wrapper:     { width: '100%', position: 'relative' },
+  pagedWrapper: { width: '100%', height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' },
   loadOverlay: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 300, gap: 12 },
+  pagedLoadOverlay: {
+    flex: 1,
+    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+    gap: 12,
+  },
   spinner: { display: 'inline-block', width: 28, height: 28, border: '3px solid rgba(200,168,75,0.2)', borderTopColor: GOLD, borderRadius: '50%', animation: 'spin 0.8s linear infinite' },
   loadMsg: { fontSize: 12, color: 'rgba(255,255,255,0.35)', textAlign: 'center' },
   content: { padding: '0 22px 24px', minHeight: 300, wordBreak: 'break-word', overflowWrap: 'break-word' },
-  navRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 22px 40px', borderTop: '1px solid rgba(128,128,128,0.15)' },
+  hScroll: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'row',
+    overflowX: 'auto',
+    overflowY: 'hidden',
+    scrollSnapType: 'x mandatory',
+    WebkitOverflowScrolling: 'touch',
+    msOverflowStyle: 'none',
+    scrollbarWidth: 'none',
+  },
+  chapterPanel: {
+    flexShrink: 0,
+    width: '100%',
+    height: '100%',
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    scrollSnapAlign: 'start',
+    padding: '8px 22px 24px',
+    wordBreak: 'break-word',
+    overflowWrap: 'break-word',
+    boxSizing: 'border-box',
+  },
+  navRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 22px 40px', borderTop: '1px solid rgba(128,128,128,0.15)', flexShrink: 0 },
   navBtn: { background: 'none', border: `1px solid ${GOLD}`, color: GOLD, padding: '8px 16px', borderRadius: 20, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'opacity 0.15s' },
   pageLabel: { fontSize: 12, color: 'rgba(128,128,128,0.6)', fontWeight: 500 },
 }
